@@ -1,0 +1,26 @@
+# Environment and secrets
+.env
+*.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Large precomputed vector cache
+data/landmark_embeddings.npz
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
