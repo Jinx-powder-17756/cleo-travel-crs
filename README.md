@@ -21,27 +21,32 @@ graph TD
 
 ---
 
-## 🚀 Features
+## 🚀 Features (Phase 1 & Phase 2)
 
 1. **Multimodal Preference & Landmark Extraction (LMM)**:
    - Users can provide unstructured natural text **and/or landmark photos** (e.g., coastal fortresses, desert oases, underwater coral reefs).
    - Identifies landmarks from photos, extracts visual aesthetic vibes into `new_interests`, and updates `target_city`.
 
-2. **Stateful Session Memory (`UserSession`)**:
-   - Maintains continuous context across multi-turn conversations via `profile` dictionary (`accumulated_interests`, `target_city`, `budget_or_style`).
-   - Deduplicates and accumulates interests.
-   - Retains city constraints across turns without asking the user to repeat themselves.
+2. **Conversational Critiquing & Negative Constraint Filtering**:
+   - Understands negative preferences (e.g. *"no museums"*, *"avoid crowded spots"*, *"no hiking"*, *"without tombs"*).
+   - Dynamically tracks `negative_constraints` and `price_preference` (`$`, `$$`, `$$$`, `$$$$`) in `UserSession`.
+   - FAISS dense retrieval pipeline filters out counter-indicated landmarks and matches price tiers.
 
-3. **Dense Vector Search (FAISS & `text-embedding-004`)**:
-   - Replaced keyword passing with an embedding-based similarity index (`faiss.IndexFlatIP`) over landmark descriptions.
-   - Combines semantic similarity with regional/city alias routing.
+3. **Spatial Day-by-Day Itinerary Planner**:
+   - Transforms isolated recommendation cards into logically sequenced, geographically clustered daily timelines.
+   - Groups landmarks by sub-district (e.g. Islamic Cairo vs. Giza Pyramids vs. Downtown Tahrir vs. Luxor East/West Bank) to eliminate metropolis crisscrossing.
+   - Assigns morning, afternoon, and evening time slots factoring in travel rhythm (`relaxed`, `moderate`, `packed`), providing transit advice, insider tips, and export to Markdown/JSON.
 
-4. **Interactive Split-Screen UI (Streamlit)**:
-   - **Left Screen**: Live conversational chat with Cleo and rich landmark cards.
-   - **Right Screen**: Real-time `UserSession.to_dict()` JSON inspector, accumulated interest tags, and live RAG similarity scores.
+4. **Independent REST API Layer (FastAPI)**:
+   - Decoupled backend architecture in `src/api.py` exposing:
+     - `POST /api/v1/chat`: Conversational multimodal turn with session memory & critique filtering.
+     - `POST /api/v1/itinerary`: Multi-day spatial itinerary generation.
+     - `GET /api/v1/session/{session_id}`: Stateful session inspector.
+     - `DELETE /api/v1/session/{session_id}`: Session reset.
 
-5. **Explainable Recommendations**:
-   - Each recommendation includes `why_matched` directly explaining how the landmark's historical/architectural context matches the user's specific extracted preferences.
+5. **Interactive Split-Screen UI (Streamlit)**:
+   - **Left Screen**: Tabbed interface featuring **Conversational Discovery & Critiquing** alongside the **Spatial Itinerary Planner & Exporter**.
+   - **Right Screen**: Real-time `UserSession` profile JSON inspector, accumulated interest tags, negative constraint chips, and live FAISS similarity scores.
 
 ---
 
@@ -50,21 +55,23 @@ graph TD
 ```
 Project/
 ├── data/
-│   ├── egyptian_landmarks.csv     # 60 curated landmarks across all Egyptian regions with rich descriptions
+│   ├── egyptian_landmarks.csv     # 60 curated landmarks across all Egyptian regions with districts & price tiers
 │   ├── landmark_embeddings.npz    # Cached precomputed dense vector embeddings
 │   └── sample_images/             # Reference photos for multimodal testing
 ├── src/
 │   ├── __init__.py                # Package exports
-│   ├── schemas.py                 # Pydantic models (ExtractedPreferences, UserSession, MatchedLandmark)
-│   ├── vector_store.py            # FAISS dense vector index & embedding engine
+│   ├── schemas.py                 # Pydantic models (UserSession, ItineraryPlan, DayPlan, ItineraryStop)
+│   ├── vector_store.py            # FAISS dense vector index with negative constraint & price filtering
 │   ├── dataset.py                 # Dataset manager & vector retrieval coordinator
-│   ├── agent.py                   # Two-step multimodal LLM extraction and recommendation pipeline
+│   ├── agent.py                   # Multimodal extraction, critiquing & grounded recommendation engine
+│   ├── itinerary_planner.py       # Spatial day-by-day itinerary planner & sub-district clustering
+│   ├── api.py                     # FastAPI REST API backend service
 │   └── config.py                  # API key & Gemini client loader
 ├── tests/
-│   └── test_pipeline.py           # Unit and integration test suite
+│   └── test_pipeline.py           # Unit and integration test suite (16 comprehensive tests)
 ├── main.py                        # Interactive Rich CLI with visual panels & session commands
-├── app.py                         # Split-Screen Streamlit Web App (Chat + Real-time UserSession JSON)
-├── requirements.txt               # Dependencies (streamlit, google-genai, pydantic, pandas, etc.)
+├── app.py                         # Split-Screen Streamlit Web App (Chat + Itinerary Planner + State Inspector)
+├── requirements.txt               # Dependencies (fastapi, streamlit, google-genai, pydantic, etc.)
 ├── .env.example                   # Environment configuration template
 └── README.md
 ```
@@ -73,28 +80,24 @@ Project/
 
 ## ⚡ Quick Start
 
-### 1. Launch the Interactive Web App (Recommended)
+### 1. Launch the FastAPI REST Backend
+```powershell
+uvicorn src.api:app --reload --port 8000
+```
+Interactive Swagger docs: **`http://localhost:8000/docs`**
+
+---
+
+### 2. Launch the Interactive Web App
 ```powershell
 streamlit run app.py
 ```
 Open **`http://localhost:8501`** in your browser.
-* **Left Screen**: Conversational chat with Cleo & landmark recommendation cards.
-* **Right Screen**: Real-time `UserSession.to_dict()` JSON inspector, accumulated interest tags, and RAG candidate search scores.
-* **Sidebar**: API Key settings, model selector, reset button, and 1-click test prompts.
-
----
-
-### 2. Run the Interactive CLI
-```powershell
-python main.py
-```
-
-### CLI Commands Available During Chat:
-- `/profile`: View your accumulated traveler state.
-- `/dataset`: Browse the catalog of Egyptian landmarks.
-- `/key <api_key>`: Set or update your Gemini API key on the fly.
-- `/reset`: Clear the session profile and start fresh.
-- `/quit` or `exit`: Exit the assistant.
+* **Left Screen**:
+  * **Tab 1: Conversational Discovery**: Chat with Cleo, attach photos, and critique recommendations.
+  * **Tab 2: Spatial Itinerary Planner**: Choose 1-7 days & travel rhythm, generate clustered daily itineraries, and export to Markdown or JSON.
+* **Right Screen**: Real-time `UserSession` inspector, interest chips, negative constraint tags (`🚫`), and FAISS search scores.
+* **Sidebar**: Toggle between **Local Engine** and **FastAPI REST API**, enter API key, or test 1-click prompts.
 
 ---
 

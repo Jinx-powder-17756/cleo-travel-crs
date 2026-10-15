@@ -52,23 +52,33 @@ class EgyptianLandmarksDataset:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves top relevant landmark candidates using Dense Vector Search (FAISS)
-        over landmark descriptions and tags, conditioned on target city constraints.
+        over landmark descriptions and tags, conditioned on target city constraints,
+        negative constraints, and price tier preferences.
         """
+        negative_constraints: List[str] = []
+        price_pref: Optional[str] = None
+
         if hasattr(session_state, "to_dict"):
             data = session_state.to_dict()
             interests = list(data.get("interests", []))
             target_city_val = data.get("target_city")
             budget_val = data.get("budget_or_style")
+            negative_constraints = list(data.get("negative_constraints", []))
+            price_pref = data.get("price_preference")
             recommended = getattr(session_state, "recommended_landmarks", [])
         elif isinstance(session_state, dict):
             interests = list(session_state.get("interests", session_state.get("accumulated_interests", [])))
             target_city_val = session_state.get("target_city")
             budget_val = session_state.get("budget_or_style")
+            negative_constraints = list(session_state.get("negative_constraints", []))
+            price_pref = session_state.get("price_preference")
             recommended = session_state.get("recommended_landmarks", [])
         else:
             interests = list(getattr(session_state, "accumulated_interests", []))
             target_city_val = getattr(session_state, "target_city", None)
             budget_val = getattr(session_state, "budget_or_style", None)
+            negative_constraints = list(getattr(session_state, "negative_constraints", []))
+            price_pref = getattr(session_state, "price_preference", None)
             recommended = getattr(session_state, "recommended_landmarks", [])
 
         # Construct dense semantic query
@@ -82,12 +92,14 @@ class EgyptianLandmarksDataset:
 
         exclude_list = recommended if exclude_recommended else []
 
-        # Execute FAISS vector search
+        # Execute FAISS vector search with negative constraint and price tier filtering
         return self.vector_store.search(
             query_text=search_query,
             top_k=top_k,
             target_city=target_city_val,
             exclude_names=exclude_list,
+            negative_constraints=negative_constraints,
+            price_preference=price_pref,
         )
 
     def format_candidates_as_context(self, candidates: List[Dict[str, Any]]) -> str:

@@ -139,6 +139,9 @@ class EgyptianTravelAgent:
             "You are an expert tourist intent and visual analyzer for an Egyptian tourism recommender system. "
             "Analyze the user's text and any provided photo. Extract fine-grained travel preferences into structured JSON. "
             "Normalize interests (e.g., 'pharaonic', 'diving', 'snorkeling', 'ancient history', 'food', 'markets', 'relaxation', 'desert', 'coastal'). "
+            "Detect negative constraints or counter-indications when user wants to exclude, avoid, or dislikes something "
+            "(e.g., 'no museums' -> ['museum'], 'avoid crowded spots' -> ['crowded'], 'no hiking' -> ['hiking']). "
+            "Detect price preferences ('$', '$$', '$$$', '$$$$', or keywords like 'budget', 'luxury'). "
             "Only identify target_city if an Egyptian city or region is mentioned or visually recognized (e.g., Cairo, Luxor, Alexandria, Sharm El-Sheikh, Aswan, Giza, Dahab, Siwa, Hurghada). "
             "Do not hallucinate cities not in Egypt."
         )
@@ -302,10 +305,46 @@ class EgyptianTravelAgent:
         elif any(w in msg for w in ["couple", "romantic", "honeymoon"]):
             style = "romantic getaway"
 
+        # Negative constraint detection
+        negative_constraints: List[str] = []
+        neg_patterns = [
+            ("museum", ["no museum", "no museums", "avoid museum", "avoid museums", "don't want museum", "dont want museum", "not museum", "not museums", "skip museum", "without museum", "without museums"]),
+            ("crowded", ["no crowd", "no crowds", "avoid crowd", "avoid crowds", "avoid crowded", "not crowded", "no crowded spots", "no crowded", "less crowded", "without crowd", "without crowds"]),
+            ("hiking", ["no hiking", "avoid hiking", "not hiking", "no mountain climbing", "without hiking"]),
+            ("diving", ["no diving", "avoid diving", "not diving", "no snorkeling", "without diving", "without snorkeling"]),
+            ("desert", ["no desert", "avoid desert", "not desert", "without desert"]),
+            ("tomb", ["no tomb", "no tombs", "avoid tomb", "avoid tombs", "without tomb", "without tombs"]),
+            ("church", ["no church", "no churches", "avoid church", "avoid churches", "without church"]),
+            ("temple", ["no temple", "no temples", "avoid temple", "avoid temples", "without temple"]),
+        ]
+        for term, phrases in neg_patterns:
+            if any(p in msg for p in phrases):
+                negative_constraints.append(term)
+
+        # Price preference detection
+        price_pref = None
+        if any(w in msg for w in ["cheaper", "cheap", "budget", "affordable", "economic", "low cost", "not expensive"]):
+            price_pref = "$"
+        elif any(w in msg for w in ["luxury", "upscale", "exclusive", "5 star", "$$$$", "high end", "five star"]):
+            price_pref = "$$$$"
+        elif any(w in msg for w in ["mid-range", "moderate", "$$"]):
+            price_pref = "$$"
+        elif "$" in msg:
+            if "$$$$" in msg:
+                price_pref = "$$$$"
+            elif "$$$" in msg:
+                price_pref = "$$$"
+            elif "$$" in msg:
+                price_pref = "$$"
+            else:
+                price_pref = "$"
+
         return ExtractedPreferences(
             new_interests=interests,
             target_city=detected_city,
             budget_or_style=style,
+            negative_constraints=negative_constraints,
+            price_preference=price_pref,
         )
 
     def _heuristic_generate_response(
@@ -336,7 +375,9 @@ class EgyptianTravelAgent:
                     category=cand["category"],
                     match_score=cand["score"],
                     why_matched=why,
-                    highlight_tip=f"Ideal for {cand['ideal_for']}. Allow around {cand.get('typical_duration_hours', 2)} hours to immerse fully."
+                    highlight_tip=f"Ideal for {cand['ideal_for']}. Allow around {cand.get('typical_duration_hours', 2)} hours to immerse fully.",
+                    district=cand.get("district", cand["city"]),
+                    price_tier=cand.get("price_tier", "$$")
                 )
             )
 

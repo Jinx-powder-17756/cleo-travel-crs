@@ -1,12 +1,18 @@
 import unittest
+from fastapi.testclient import TestClient
 from src.schemas import (
     ExtractedPreferences,
     MatchedLandmark,
     AgentRecommendationResponse,
     UserSession,
+    ItineraryPlan,
+    DayPlan,
+    ItineraryStop,
 )
 from src.dataset import EgyptianLandmarksDataset
 from src.agent import EgyptianTravelAgent
+from src.itinerary_planner import SpatialItineraryPlanner
+from src.api import app
 
 
 class TestEgyptianTravelAssistant(unittest.TestCase):
@@ -205,6 +211,137 @@ class TestEgyptianTravelAssistant(unittest.TestCase):
         self.assertEqual(candidates[0]["landmark_name"], "Marsa Abu Dabbab (Sea Turtles & Dugongs)")
         self.assertEqual(candidates[0]["city"], "Marsa Alam")
 
+    def test_negative_constraint_filtering_museums(self):
+        """Verifies that counter-indicated 'museum' items are dynamically excluded from candidates."""
+        dataset = EgyptianLandmarksDataset()
+        session = UserSession(user_id="test_neg_museum")
+        session.update_profile({
+            "new_interests": ["ancient history", "pharaonic", "art"],
+            "target_city": "Cairo",
+            "negative_constraints": ["museum"],
+        })
+        candidates = dataset.retrieve_candidates(session, top_k=4)
+        self.assertGreater(len(candidates), 0)
+        candidate_names = [c["landmark_name"] for c in candidates]
+        # Museums must be filtered out
+        for name in candidate_names:
+            self.assertNotIn("Egyptian Museum", name)
+            self.assertNotIn("NMEC", name)
+            self.assertNotIn("Museum", name)
+
+    def test_negative_constraint_session_accumulation(self):
+        """Verifies multi-turn accumulation of negative constraints and price preferences."""
+        session = UserSession(user_id="test_accumulation")
+        session.update_profile({
+            "new_interests": ["hiking"],
+            "negative_constraints": ["crowded"],
+            "price_preference": "$",
+        })
+        d = session.to_dict()
+        self.assertIn("crowded", d["negative_constraints"])
+        self.assertEqual(d["price_preference"], "$")
+
+        # Turn 2: adds another constraint without erasing prior ones
+        session.update_profile({
+            "negative_constraints": ["museums"],
+        })
+        d2 = session.to_dict()
+        self.assertIn("crowded", d2["negative_constraints"])
+        self.assertIn("museums", d2["negative_constraints"])
+        self.assertEqual(d2["price_preference"], "$")
+
+    def test_price_tier_budget_filtering(self):
+        """Verifies budget preference '$' filters out luxury '$$$$' candidates."""
+        dataset = EgyptianLandmarksDataset()
+        session = UserSession(user_id="test_price_tier")
+        session.update_profile({
+            "new_interests": ["nile cruise", "sailing", "adventure"],
+            "target_city": "Luxor",
+            "price_preference": "$",
+        })
+        candidates = dataset.retrieve_candidates(session, top_k=4)
+        self.assertGreater(len(candidates), 0)
+        for c in candidates:
+            # Luxury tier $$$$ should be excluded or penalized below top results
+            self.assertNotEqual(c.get("price_tier"), "$$$$")
+
+    def test_spatial_itinerary_clustering_and_markdown(self):
+        """Verifies multi-day itinerary generation, district clustering, and markdown generation."""
+        dataset = EgyptianLandmarksDataset()
+        planner = SpatialItineraryPlanner(dataset=dataset)
+        session = UserSession(user_id="test_itinerary_user")
+        session.update_profile({
+            "new_interests": ["pharaonic", "pyramids", "islamic architecture"],
+            "target_city": "Cairo",
+        })
+
+        itinerary = planner.plan_itinerary(session, days_count=3, pace="moderate")
+        self.assertIsInstance(itinerary, ItineraryPlan)
+        self.assertEqual(itinerary.city, "Cairo")
+        self.assertEqual(len(itinerary.days), 3)
+
+        for day in itinerary.days:
+            self.assertGreater(len(day.stops), 0)
+            self.assertTrue(len(day.theme_or_district) > 0)
+            self.assertTrue(len(day.route_rationale) > 0)
+            for stop in day.stops:
+                self.assertIn(stop.time_slot.lower(), ["morning", "afternoon", "evening"])
+                self.assertTrue(len(stop.landmark_name) > 0)
+                self.assertTrue(len(stop.insider_tip) > 0)
+                self.assertTrue(len(stop.transport_advice) > 0)
+
+        # Verify markdown export
+        md = itinerary.to_markdown()
+        self.assertIn("# 🧭 Cleo Custom Itinerary: Cairo", md)
+        self.assertIn("Day 1:", md)
+        self.assertIn("Day 2:", md)
+        self.assertIn("Day 3:", md)
+
+    def test_fastapi_rest_endpoints(self):
+        """Verifies FastAPI REST API endpoints using TestClient."""
+        client = TestClient(app)
+
+        # 1. Health check
+        h_res = client.get("/api/v1/health")
+        self.assertEqual(h_res.status_code, 200)
+        self.assertEqual(h_res.json()["status"], "healthy")
+
+        # 2. Chat endpoint
+        chat_payload = {
+            "session_id": "test_fastapi_session",
+            "message": "I want to explore historic sites in Alexandria without crowded spots, budget style.",
+        }
+        c_res = client.post("/api/v1/chat", json=chat_payload)
+        self.assertEqual(c_res.status_code, 200)
+        c_data = c_res.json()
+        self.assertEqual(c_data["session_id"], "test_fastapi_session")
+        self.assertGreater(len(c_data["recommendations"]), 0)
+        self.assertEqual(c_data["user_profile"]["target_city"], "Alexandria")
+
+        # 3. Itinerary endpoint
+        itin_payload = {
+            "session_id": "test_fastapi_session",
+            "days_count": 2,
+            "pace": "moderate",
+        }
+        i_res = client.post("/api/v1/itinerary", json=itin_payload)
+        self.assertEqual(i_res.status_code, 200)
+        i_data = i_res.json()
+        self.assertEqual(i_data["city"], "Alexandria")
+        self.assertEqual(len(i_data["days"]), 2)
+
+        # 4. Get session state
+        s_res = client.get("/api/v1/session/test_fastapi_session")
+        self.assertEqual(s_res.status_code, 200)
+        s_data = s_res.json()
+        self.assertEqual(s_data["session_id"], "test_fastapi_session")
+        self.assertIn("crowded", s_data["profile"]["negative_constraints"])
+
+        # 5. Delete session
+        d_res = client.delete("/api/v1/session/test_fastapi_session")
+        self.assertEqual(d_res.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
+
