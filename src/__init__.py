@@ -9,10 +9,15 @@ from src.schemas import (
     AgentRecommendationResponse,
     UserSession,
     UserSessionState,
+    TimeSlot,
+    ItineraryStop,
+    DayPlan,
+    ItineraryPlan,
 )
 from src.vector_store import LandmarkVectorStore
 from src.dataset import EgyptianLandmarksDataset
 from src.agent import EgyptianTravelAgent
+from src.itinerary_planner import SpatialItineraryPlanner
 from src.config import get_gemini_client, DEFAULT_MODEL
 
 __all__ = [
@@ -21,9 +26,14 @@ __all__ = [
     "AgentRecommendationResponse",
     "UserSession",
     "UserSessionState",
+    "TimeSlot",
+    "ItineraryStop",
+    "DayPlan",
+    "ItineraryPlan",
     "LandmarkVectorStore",
     "EgyptianLandmarksDataset",
     "EgyptianTravelAgent",
+    "SpatialItineraryPlanner",
     "get_gemini_client",
     "DEFAULT_MODEL",
 ]
